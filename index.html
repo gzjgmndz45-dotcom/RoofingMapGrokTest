@@ -5,16 +5,62 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Marker Karte</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <style>body{margin:0}#map{height:100vh}</style>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>body{margin:0}#map{height:100vh}.legend{position:absolute;bottom:20px;left:20px;background:white;padding:10px;border-radius:8px;z-index:1000}</style>
 </head>
 <body>
   <div id="map"></div>
+  <div class="legend"><b>Legende:</b><br>● Grün=Dach<br>● Gelb=Komplikationen<br>● Rot=Nein</div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
+    const supabase = Supabase.createClient('https://vxnvskwmhxbzmdzozmvp.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4bnZza3dtaHhiem1kem96bXZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkyNzY4NjAsImV4cCI6MjA5NDg1Mjg2MH0.S5FO-LiN_90gFR2PdtzoOCawy4f_zImrmfLEz16D8e4');
+
     let map = L.map('map').setView([51.5, 10], 6);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-    alert("Karte sollte jetzt sichtbar sein");
+
+    let satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}');
+    L.control.layers({"Normal": L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'), "Satellit": satellite}).addTo(map);
+
+    let markerGroup = L.layerGroup().addTo(map);
+
+    function createIcon(c) { return L.divIcon({html:`<div style="background:${c};width:24px;height:24px;border-radius:50%;border:3px solid white"></div>`, iconSize:[28,28], iconAnchor:[14,14]}); }
+
+    async function loadMarkers() {
+      markerGroup.clearLayers();
+      const {data} = await supabase.from('markers').select('*');
+      data?.forEach(m => {
+        let marker = L.marker([m.lat, m.lng], {icon: createIcon(m.color)}).addTo(markerGroup);
+        marker.bindPopup(`<b>${m.title||''}</b><br>${m.info||''}<br>${m.photo_url?`<img src="${m.photo_url}" style="max-width:200px">`:''}<br><button onclick="deleteMarker('${m.id}')">Löschen</button>`);
+      });
+    }
+
+    async function saveMarker(lat, lng, color, title, info, file) {
+      let photo_url = null;
+      if (file) {
+        const fn = Date.now() + '-' + file.name;
+        await supabase.storage.from('marker-photos').upload(fn, file);
+        photo_url = supabase.storage.from('marker-photos').getPublicUrl(fn).data.publicUrl;
+      }
+      await supabase.from('markers').insert({lat, lng, color, title, info, photo_url});
+      loadMarkers();
+    }
+
+    window.deleteMarker = async id => { if(confirm('Löschen?')){ await supabase.from('markers').delete().eq('id',id); loadMarkers(); }};
+
+    map.on('click', e => {
+      let color = prompt("grün/gelb/rot", "grün");
+      let title = prompt("Titel");
+      let info = prompt("Info");
+      if(confirm("Foto hinzufügen?")) {
+        let i=document.createElement('input'); i.type='file'; i.accept='image/*';
+        i.onchange=ev=>saveMarker(e.latlng.lat, e.latlng.lng, color, title, info, ev.target.files[0]);
+        i.click(); return;
+      }
+      saveMarker(e.latlng.lat, e.latlng.lng, color, title, info, null);
+    });
+
+    loadMarkers();
   </script>
 </body>
 </html>
