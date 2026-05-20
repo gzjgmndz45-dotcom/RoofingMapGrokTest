@@ -7,12 +7,13 @@
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
-  <!-- ✅ richtiger Supabase UMD Build -->
+  <!-- Supabase -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 
   <style>
     body { margin: 0; }
     #map { height: 100vh; }
+
     .legend {
       position: absolute;
       bottom: 20px;
@@ -27,6 +28,7 @@
 
 <body>
   <div id="map"></div>
+
   <div class="legend">
     <b>Legende:</b><br>
     ● Grün=Dach<br>
@@ -39,13 +41,14 @@
   <script>
     window.addEventListener("load", () => {
 
-      // ✅ richtig: supabase (klein)
-      const supabaseClient = supabase.createClient(
+      // ✅ Supabase Client
+      const sb = supabase.createClient(
         'https://vxnvskwmhxbzmdzozmvp.supabase.co',
         'DEIN_ANON_KEY'
       );
 
-      let map = L.map('map').setView([51.5, 10], 6);
+      // Karte
+      const map = L.map('map').setView([51.5, 10], 6);
 
       const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
       const satellite = L.tileLayer(
@@ -54,35 +57,35 @@
 
       osm.addTo(map);
 
-      L.control.layers(
-        { "Normal": osm, "Satellit": satellite }
-      ).addTo(map);
+      L.control.layers({
+        "Normal": osm,
+        "Satellit": satellite
+      }).addTo(map);
 
-      let markerGroup = L.layerGroup().addTo(map);
+      const markerGroup = L.layerGroup().addTo(map);
 
-      function createIcon(c) {
+      function createIcon(color) {
         return L.divIcon({
-          html: `<div style="background:${c};width:24px;height:24px;border-radius:50%;border:3px solid white"></div>`,
+          html: `<div style="background:${color};width:24px;height:24px;border-radius:50%;border:3px solid white"></div>`,
           iconSize: [28, 28],
           iconAnchor: [14, 14]
         });
       }
 
+      // 🔥 MARKER LADEN
       async function loadMarkers() {
         markerGroup.clearLayers();
 
-        const { data, error } = await supabaseClient
-          .from('markers')
-          .select('*');
+        const { data, error } = await sb.from('markers').select('*');
 
         if (error) {
-          console.error(error);
+          console.error("❌ Load Fehler:", error);
           return;
         }
 
         data?.forEach(m => {
-          let marker = L.marker([m.lat, m.lng], {
-            icon: createIcon(m.color)
+          const marker = L.marker([m.lat, m.lng], {
+            icon: createIcon(m.color || "gray")
           }).addTo(markerGroup);
 
           marker.bindPopup(`
@@ -94,60 +97,107 @@
         });
       }
 
+      // 🔥 MARKER SPEICHERN (mit FULL DEBUG)
       async function saveMarker(lat, lng, color, title, info, file) {
+
+        console.log("➡️ saveMarker gestartet:", { lat, lng, color, title, info, file });
+
         let photo_url = null;
 
-        if (file) {
-          const fn = Date.now() + '-' + file.name;
+        try {
 
-          await supabaseClient.storage
-            .from('marker-photos')
-            .upload(fn, file);
+          if (file) {
+            const filename = Date.now() + '-' + file.name;
 
-          photo_url = supabaseClient.storage
-            .from('marker-photos')
-            .getPublicUrl(fn).data.publicUrl;
+            const upload = await sb.storage
+              .from('marker-photos')
+              .upload(filename, file);
+
+            if (upload.error) {
+              console.error("❌ Upload Fehler:", upload.error);
+              alert(upload.error.message);
+              return;
+            }
+
+            photo_url = sb.storage
+              .from('marker-photos')
+              .getPublicUrl(filename).data.publicUrl;
+          }
+
+          const insert = await sb.from('markers').insert({
+            lat,
+            lng,
+            color,
+            title,
+            info,
+            photo_url
+          });
+
+          if (insert.error) {
+            console.error("❌ Insert Fehler:", insert.error);
+            alert("Insert Fehler: " + insert.error.message);
+            return;
+          }
+
+          console.log("✅ Marker gespeichert!");
+          loadMarkers();
+
+        } catch (err) {
+          console.error("❌ Unerwarteter Fehler:", err);
         }
-
-        await supabaseClient.from('markers').insert({
-          lat, lng, color, title, info, photo_url
-        });
-
-        loadMarkers();
       }
 
+      // 🔥 DELETE
       window.deleteMarker = async (id) => {
-        if (confirm('Löschen?')) {
-          await supabaseClient.from('markers').delete().eq('id', id);
+        if (confirm("Löschen?")) {
+          const res = await sb.from('markers').delete().eq('id', id);
+
+          if (res.error) {
+            console.error(res.error);
+            return;
+          }
+
           loadMarkers();
         }
       };
 
+      // 🔥 CLICK EVENT
       map.on('click', (e) => {
-        let color = prompt("grün/gelb/rot", "grün");
-        let title = prompt("Titel");
-        let info = prompt("Info");
+
+        const color = prompt("Farbe (grün / gelb / rot)", "grün") || "grün";
+        const title = prompt("Titel") || "";
+        const info = prompt("Info") || "";
 
         if (confirm("Foto hinzufügen?")) {
-          let i = document.createElement('input');
-          i.type = 'file';
-          i.accept = 'image/*';
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/*';
 
-          i.onchange = ev =>
+          input.onchange = ev => {
+            const file = ev.target.files[0];
+
             saveMarker(
               e.latlng.lat,
               e.latlng.lng,
               color,
               title,
               info,
-              ev.target.files[0]
+              file
             );
+          };
 
-          i.click();
+          input.click();
           return;
         }
 
-        saveMarker(e.latlng.lat, e.latlng.lng, color, title, info, null);
+        saveMarker(
+          e.latlng.lat,
+          e.latlng.lng,
+          color,
+          title,
+          info,
+          null
+        );
       });
 
       loadMarkers();
